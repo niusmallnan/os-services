@@ -6,13 +6,11 @@ RUN apt-get update \
         libssl-dev libmount-dev \
         kmod \
         parted lsscsi ksh curl git \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /dist
-COPY entry.sh /dist/
 COPY build.sh /dist/
-COPY wonka.sh /dist/
-COPY Dockerfile.iscsi-tools /dist/
 
 CMD ["/dist/build.sh"]
 

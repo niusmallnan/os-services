@@ -1,87 +1,77 @@
-#!/bin/sh
+#!/bin/bash
 set -ex
-
 
 KERNEL_VERSION=$(uname -r)
 echo "open-iscsi for ${KERNEL_VERSION}"
 
-DIR=/lib/modules/${KERNEL_VERSION}/build
 STAMP=/lib/modules/${KERNEL_VERSION}/.open-iscsi-done
 
 if [ -e $STAMP ]; then
     modprobe iscsi_tcp
-    system-docker run --rm iscsi-tools cat /setup_wonka.sh > /setup_wonka.sh
-    chmod 755 /setup_wonka.sh
-    # setup wonka in the console container
-    /setup_wonka.sh console
 
     echo open-iscsi for ${KERNEL_VERSION} already installed. Delete $STAMP to reinstall
     exit 0
 fi
 
-#TODO: test that the headers are there
-#TODO: or, if we continue to be able to use the docker daemon, can we use ros to enable and up it?
-ros service enable kernel-headers-system-docker
-ros service up kernel-headers-system-docker
+OPENSSL_VERSION="OpenSSL_1_1_0j"
+ISNS_VERSION="0.98"
+ISCSI_VERSION="2.0.873"
+SERVICE_VERSION="v2.0.873-1"
 
+curl -sL https://github.com/openssl/openssl/archive/${OPENSSL_VERSION}.tar.gz > ${OPENSSL_VERSION}.tar.gz
+tar zxf ${OPENSSL_VERSION}.tar.gz
+rm -rf /dist/openssl
+mv openssl-${OPENSSL_VERSION} /dist/openssl
 
-VERSION="0.98"
-curl -sL https://github.com/open-iscsi/open-isns/archive/v${VERSION}.tar.gz > open-isns${VERSION}.tar.gz
-tar zxvf open-isns${VERSION}.tar.gz
+curl -sL https://github.com/open-iscsi/open-isns/archive/v${ISNS_VERSION}.tar.gz > open-isns${ISNS_VERSION}.tar.gz
+tar zxf open-isns${ISNS_VERSION}.tar.gz
 rm -rf /dist/isns
-mv open-isns-${VERSION}/ /dist/isns/
+mv open-isns-${ISNS_VERSION} /dist/isns
 
-VERSION="2.0.873"
-curl -sL https://github.com/open-iscsi/open-iscsi/archive/${VERSION}.tar.gz > open-iscsi${VERSION}.tar.gz
-tar zxvf open-iscsi${VERSION}.tar.gz
+curl -sL https://github.com/open-iscsi/open-iscsi/archive/${ISCSI_VERSION}.tar.gz > open-iscsi${ISCSI_VERSION}.tar.gz
+tar zxf open-iscsi${ISCSI_VERSION}.tar.gz
 rm -rf /dist/iscsi
-mv open-iscsi-${VERSION}/ /dist/iscsi/
+mv open-iscsi-${ISCSI_VERSION} /dist/iscsi
 
-cd /dist/isns
+# install openssl
+pushd /dist/openssl
+./config
+make -j$(nproc)
+make DESTDIR=/dist/arch install
+popd
+
+# install isns
+pushd /dist/isns
 ./configure
 make -s -j$(nproc)
-#make install
-#make install_hdrs
-#make install_lib
-
-cd /dist/iscsi
-make -s -j$(nproc)
-#make install
-
-# last layer - we could use stratos :)
-cd /dist/isns
 make DESTDIR=/dist/arch install
 make DESTDIR=/dist/arch install_hdrs
 make DESTDIR=/dist/arch install_lib
-cd /dist/iscsi
+popd
+
+# install iscsi
+pushd /dist/iscsi
+make -s -j$(nproc)
 make DESTDIR=/dist/arch install
-cd /dist
+popd
 
-cp /dist/Dockerfile.iscsi-tools /dist/arch/Dockerfile
-cp /dist/entry.sh /dist/arch/
+# copy to console /opt dir
+system-docker exec console mkdir -p /var/lib/rancher/extra-apps /var/lib/rancher/profile.d
+pushd /dist/arch
+system-docker cp . console:/var/lib/rancher/extra-apps/open-iscsi-${SERVICE_VERSION}
 
-# how do I export the commands to the console?
-# in the future, it'd be nice to have some share /usr/local/bin, but that might interfere with other things.
-# we do seem to have /opt mapped
-echo "#!/bin/sh" > /dist/arch/setup_wonka.sh
-echo "echo installing wonka bin links in \${1}" >> /dist/arch/setup_wonka.sh
-chmod 755 /dist/arch/setup_wonka.sh
-#for i in $(ls arch/usr/local/bin); do
-#   echo "system-docker cp wonka.sh \${1}:/usr/bin/$i" >> /dist/arch/setup_wonka.sh
-#done
-for i in $(ls arch/usr/local/sbin); do
-   echo "system-docker cp wonka.sh \${1}:usr/sbin/$i" >> /dist/arch/setup_wonka.sh
-done
-for i in $(ls arch/sbin); do
-   echo "system-docker cp wonka.sh \${1}:/sbin/$i" >> /dist/arch/setup_wonka.sh
-done
-chmod 755 /dist/arch/setup_wonka.sh
-system-docker build --network=host -t iscsi-tools arch/
+# copy profile file to console
+cat << EOF > profile.sh
+BASE=/var/lib/rancher/extra-apps/open-iscsi-${SERVICE_VERSION}
+
+export PATH=\$PATH:\$BASE/sbin:\$BASE/usr/local/sbin
+export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:\$BASE/usr/local/lib:\$BASE/usr/local/lib64
+EOF
+chmod +x profile.sh
+system-docker cp profile.sh console:/var/lib/rancher/profile.d/open-iscsi.sh
+popd
 
 modprobe iscsi_tcp
-
-# setup wonka in the console container
-/dist/arch/setup_wonka.sh console
 
 touch $STAMP
 echo open-iscsi for ${KERNEL_VERSION} installed. Delete $STAMP to reinstall
