@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -ex
 
 
@@ -24,38 +24,33 @@ fi
 ros service enable kernel-headers-system-docker
 ros service up kernel-headers-system-docker
 
+ISNS_VERSION="0.98"
+ISCSI_VERSION="2.0.873"
 
-VERSION="0.98"
-curl -sL https://github.com/open-iscsi/open-isns/archive/v${VERSION}.tar.gz > open-isns${VERSION}.tar.gz
-tar zxvf open-isns${VERSION}.tar.gz
+curl -sL https://github.com/open-iscsi/open-isns/archive/v${ISNS_VERSION}.tar.gz > open-isns${ISNS_VERSION}.tar.gz
+tar zxvf open-isns${ISNS_VERSION}.tar.gz
 rm -rf /dist/isns
-mv open-isns-${VERSION}/ /dist/isns/
+mv open-isns-${ISNS_VERSION}/ /dist/isns/
 
-VERSION="2.0.873"
-curl -sL https://github.com/open-iscsi/open-iscsi/archive/${VERSION}.tar.gz > open-iscsi${VERSION}.tar.gz
-tar zxvf open-iscsi${VERSION}.tar.gz
+curl -sL https://github.com/open-iscsi/open-iscsi/archive/${ISCSI_VERSION}.tar.gz > open-iscsi${ISCSI_VERSION}.tar.gz
+tar zxvf open-iscsi${ISCSI_VERSION}.tar.gz
 rm -rf /dist/iscsi
-mv open-iscsi-${VERSION}/ /dist/iscsi/
+mv open-iscsi-${ISCSI_VERSION}/ /dist/iscsi/
 
-cd /dist/isns
+# install isns
+pushd /dist/isns
 ./configure
 make -s -j$(nproc)
-#make install
-#make install_hdrs
-#make install_lib
-
-cd /dist/iscsi
-make -s -j$(nproc)
-#make install
-
-# last layer - we could use stratos :)
-cd /dist/isns
 make DESTDIR=/dist/arch install
 make DESTDIR=/dist/arch install_hdrs
 make DESTDIR=/dist/arch install_lib
-cd /dist/iscsi
+popd
+
+# install iscsi
+pushd /dist/iscsi
+make -s -j$(nproc)
 make DESTDIR=/dist/arch install
-cd /dist
+popd
 
 cp /dist/Dockerfile.iscsi-tools /dist/arch/Dockerfile
 cp /dist/entry.sh /dist/arch/
@@ -76,7 +71,19 @@ for i in $(ls arch/sbin); do
    echo "system-docker cp wonka.sh \${1}:/sbin/$i" >> /dist/arch/setup_wonka.sh
 done
 chmod 755 /dist/arch/setup_wonka.sh
-system-docker build --network=host -t iscsi-tools arch/
+
+if [ "XX$HTTP_PROXY" != "XX" ]; then
+    BUILD_ARGS="--build-arg HTTP_PROXY --build-arg http_proxy="$HTTP_PROXY
+fi
+
+if [ "XX$HTTPS_PROXY" != "XX" ]; then
+    BUILD_ARGS=$BUILD_ARGS" --build-arg HTTPS_PROXY --build-arg https_proxy="$HTTPS_PROXY
+fi
+
+if [ "XX$NO_PROXY" != "XX" ]; then
+    BUILD_ARGS=$BUILD_ARGS" --build-arg NO_PROXY --build-arg no_proxy="$NO_PROXY
+fi
+system-docker build --network=host -t $BUILD_ARGS iscsi-tools arch/
 
 modprobe iscsi_tcp
 
